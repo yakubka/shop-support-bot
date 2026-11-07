@@ -11,13 +11,25 @@ kb = {f["id"]: f["text"] for f in json.loads((root / "kb.json").read_text(encodi
 prompt = (root / "prompt.txt").read_text(encoding="utf-8").replace("{kb}", "\n".join(f"- {t}" for t in kb.values()))
 
 cards = {
-    "price": r"цен|стои|налич|сколько",
+    "price": r"цен|стои|стоят|наличи|сколько|почем|2\s?490",
     "delivery": r"достав|курьер|привез",
     "opened": r"вскр|распак|открыл",
     "defect": r"брак|слома|не работа|дефект",
-    "return": r"возвра|вернуть|сдать",
+    "return": r"возвра|\bверн|сдать|обратно",
 }
+outside = "|".join([
+    r"оплатить|оплачу|оплачива|способ\w* оплат|картой|наличн|наличк|рассрочк|кредит|платн",
+    r"самовывоз|пункт|пвз|почт(?:а|ой|у|ы)\b|почтов|сдэк|адрес|город|регион|област|стран(?:а|у|е|ы)\b|мкад",
+    r"достав\w*\s+(?:\w+\s+)?(?:стои|цен)|(?:стои|цен)\w*\s+(?:\w+\s+)?достав",
+    r"достав\w*\s+(?:\w+\s+){0,2}(?:в|во|по|до)\s+(?!течени|срок|как|котор|скольк)[а-я]{3,}",
+    r"гарант|обмен|\bчек|документ|паспорт|чехо?л|кабел|аксессуар|зарядк|зарядн|\bвес(?:ят|ит|а)?\b|цвет|характеристик|блютуз|bluetooth|\b[xх]-?(?!1\b)\d+",
+])
+term = r"(\d+)\s*-?\s*(?:й|ый|ий|ой)?\s*(день|дня|дней|сут|недел)"
 unknown = "Такой информации у меня нет. Могу ответить про наличие и цену наушников X1, доставку, возврат и брак. Вопрос передал менеджеру."
+
+
+def clean(t):
+    return re.sub(r"\b(?:без|нет|не)\s+(?:брак|дефект|слома)\w*|\bнебракован\w*|\b(?:брак|дефект)\w*\s+нет\b", "", t.lower().replace("ё", "е"))
 
 
 def nums(t):
@@ -25,9 +37,9 @@ def nums(t):
 
 
 def offline(text):
-    s = text.lower()
+    s = clean(text)
     keys = [k for k, p in cards.items() if re.search(p, s)]
-    if not keys:
+    if not keys or re.search(outside, s):
         return unknown
     if "defect" in keys:
         keys = ["defect"]
@@ -62,17 +74,21 @@ def llm(text):
 
 
 def route(text):
-    s = text.lower()
-    if re.search(r"скидк|промокод|купон|дешевле|бесплатн", s):
+    s = clean(text)
+    if re.search(r"скид|скитк|дисконт|discount|промо|promo|купон|\bакци|распродаж|уступ|\bторг|дешевле|сбав|(?:отдад|продад)\w*\s+за\s+\d", s):
         return f"{kb['discount']} {kb['price']}"
-    order = re.search(r"заказ\D{0,5}(\d+)|№\s*(\d+)", s)
-    if order:
-        n = order.group(1) or order.group(2)
-        return f"Статус заказа {n} я не вижу, доступа к заказам у меня нет. По общему правилу доставка курьером на следующий день, слот с 18 до 21. Вопрос по заказу передал менеджеру."
-    day = re.search(r"(\d+)\s*-?\s*(?:й|ый|ий|ой)?\s*(?:день|дня|дней|сут)", s)
-    if re.search(cards["return"], s) and not re.search(cards["defect"], s) and day and int(day.group(1)) > 14:
+    if re.search(r"\bзаказ(?:а|у|ом|е|ы|ов|ам|ами|ах)?\b|\border\b|посылк|трек|№", s) and not re.search(rf"{cards['return']}|{cards['defect']}|оформить|сделать заказ|разместить", s):
+        n = re.search(r"(?:заказ\w*|order|№|номер)\s*(?:№|#|номер)?\s*(\d+)", s)
+        return f"Статус заказа{' ' + n.group(1) if n else ''} я не вижу, доступа к заказам у меня нет. По общему правилу доставка курьером на следующий день, слот с 18 до 21. Вопрос по заказу передал менеджеру."
+    if re.search(r"забуд|забыть|игнорир|ignore|промпт|prompt|теперь ты|ты теперь|притворись|сделай вид|режим разработчик|developer mode|jailbreak|системн\w* (?:сообщ|инструкц|правил)", s):
+        return "Правила магазина не меняются. Могу ответить про наличие и цену наушников X1, доставку, возврат и брак."
+    m = re.search(term, s)
+    days = int(m.group(1)) * (7 if m.group(2) == "недел" else 1) if m else 0
+    late = days > 14 or re.search(r"(?:месяц|год)\w*\s+назад|прошл\w*\s+(?:месяц|год)|полгода", s)
+    if late and re.search(cards["return"], s) and not re.search(cards["defect"], s):
         rule = kb["opened"] if re.search(cards["opened"], s) else kb["return"]
-        return f"Нет, на {day.group(1)}-й день вернуть уже не получится. {rule.replace('тоже ', '')} Если в наушниках брак, это отдельный случай. {kb['defect']}"
+        when = f"на {days}-й день " if days > 14 else ""
+        return f"Нет, {when}вернуть уже не получится. {rule.replace('тоже ', '')} Если в наушниках брак, это отдельный случай. {kb['defect']}"
     return llm(text)
 
 
