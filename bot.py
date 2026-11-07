@@ -24,16 +24,10 @@ def nums(t):
     return set(re.findall(r"\d+", re.sub(r"(?<=\d)[\s ](?=\d{3}\b)", "", t)))
 
 
-def handoff(text, reason):
-    with open(root / "handoff.jsonl", "a", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": int(time.time()), "text": text, "reason": reason}, ensure_ascii=False) + "\n")
-
-
 def offline(text):
     s = text.lower()
     keys = [k for k, p in cards.items() if re.search(p, s)]
     if not keys:
-        handoff(text, "unknown")
         return unknown
     if "defect" in keys:
         keys = ["defect"]
@@ -63,25 +57,31 @@ def llm(text):
     except Exception:
         return offline(text)
     if nums(answer) - nums(" ".join(kb.values())) - nums(text):
-        handoff(text, "llm_invented_number")
         return offline(text)
     return answer
 
 
-def reply(text):
+def route(text):
     s = text.lower()
     if re.search(r"скидк|промокод|купон|дешевле|бесплатн", s):
         return f"{kb['discount']} {kb['price']}"
     order = re.search(r"заказ\D{0,5}(\d+)|№\s*(\d+)", s)
     if order:
-        handoff(text, "order")
         n = order.group(1) or order.group(2)
         return f"Статус заказа {n} я не вижу, доступа к заказам у меня нет. По общему правилу доставка курьером на следующий день, слот с 18 до 21. Вопрос по заказу передал менеджеру."
     day = re.search(r"(\d+)\s*-?\s*(?:й|ый|ий|ой)?\s*(?:день|дня|дней|сут)", s)
     if re.search(cards["return"], s) and not re.search(cards["defect"], s) and day and int(day.group(1)) > 14:
         rule = kb["opened"] if re.search(cards["opened"], s) else kb["return"]
-        return f"Нет, на {day.group(1)}-й день вернуть уже не получится. {rule.replace('тоже ', '')} Если в наушниках брак, напишите, передам вопрос менеджеру, по браку решение принимается после экспертизы."
+        return f"Нет, на {day.group(1)}-й день вернуть уже не получится. {rule.replace('тоже ', '')} Если в наушниках брак, это отдельный случай. {kb['defect']}"
     return llm(text)
+
+
+def reply(text, chat=None):
+    answer = route(text)
+    if "менеджер" in answer.lower():
+        with open(root / "handoff.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": int(time.time()), "chat": chat, "text": text, "answer": answer}, ensure_ascii=False) + "\n")
+    return answer
 
 
 def telegram(token):
@@ -95,7 +95,7 @@ def telegram(token):
                 msg = u.get("message") or {}
                 if "text" not in msg:
                     continue
-                answer = "Здравствуйте. Подскажу по наушникам X1, доставке и возврату." if msg["text"] == "/start" else reply(msg["text"])
+                answer = "Здравствуйте. Подскажу по наушникам X1, доставке и возврату." if msg["text"] == "/start" else reply(msg["text"], msg["chat"]["id"])
                 data = json.dumps({"chat_id": msg["chat"]["id"], "text": answer}).encode()
                 urllib.request.urlopen(urllib.request.Request(api + "sendMessage", data=data, headers={"Content-Type": "application/json"}))
         except Exception as e:
