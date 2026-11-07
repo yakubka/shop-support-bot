@@ -7,8 +7,8 @@ import urllib.request
 from pathlib import Path
 
 root = Path(__file__).parent
-kb = {f["id"]: f["text"] for f in json.loads((root / "kb.json").read_text())}
-prompt = (root / "prompt.txt").read_text().replace("{kb}", "\n".join(f"- {t}" for t in kb.values()))
+kb = {f["id"]: f["text"] for f in json.loads((root / "kb.json").read_text(encoding="utf-8"))}
+prompt = (root / "prompt.txt").read_text(encoding="utf-8").replace("{kb}", "\n".join(f"- {t}" for t in kb.values()))
 
 cards = {
     "price": r"цен|стои|налич|сколько",
@@ -25,7 +25,7 @@ def nums(t):
 
 
 def handoff(text, reason):
-    with open(root / "handoff.jsonl", "a") as f:
+    with open(root / "handoff.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps({"ts": int(time.time()), "text": text, "reason": reason}, ensure_ascii=False) + "\n")
 
 
