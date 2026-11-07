@@ -25,6 +25,8 @@ outside = "|".join([
     r"гарант|обмен|\bчек|документ|паспорт|чехо?л|кабел|аксессуар|зарядк|зарядн|\bвес(?:ят|ит|а)?\b|цвет|характеристик|блютуз|bluetooth|\b[xх]-?(?!1\b)\d+",
 ])
 term = r"(\d+)\s*-?\s*(?:й|ый|ий|ой)?\s*(день|дня|дней|сут|недел)"
+facts = r"\b[xх]-?1\b|2\s?490|18(?::00)?\s*(?:до|-|–)\s*21(?::00)?|14\s*-?\s*(?:ти\s*)?(?:календарн\w*\s*)?дн|3\s*(?:-?х\s*)?рабоч"
+claims = r"отправлен|в пути|передан\w* курьер|\bоформил|оформлен[аоы]?\b|одобр|согласова|процент|%|бонус|подар|компенсац|\bчек|упаковк|документ|заявлени|паспорт|с момента|после получени|телефон|позвон|e-?mail|сайт|http|@"
 unknown = "Такой информации у меня нет. Могу ответить про наличие и цену наушников X1, доставку, возврат и брак. Вопрос передал менеджеру."
 
 
@@ -32,8 +34,12 @@ def clean(t):
     return re.sub(r"\b(?:без|нет|не)\s+(?:брак|дефект|слома)\w*|\bнебракован\w*|\b(?:брак|дефект)\w*\s+нет\b", "", t.lower().replace("ё", "е"))
 
 
-def nums(t):
-    return set(re.findall(r"\d+", re.sub(r"(?<=\d)[\s ](?=\d{3}\b)", "", t)))
+def invented(answer, text):
+    a = answer.lower()
+    rest = re.sub(facts, "", a)
+    for n, _ in re.findall(term, text.lower()):
+        rest = re.sub(rf"\b{n}\b", "", rest)
+    return bool(re.search(r"\d", rest) or re.search(claims, a) or re.search(r"(?:ден[ье]г|средств)[^.,]*\b14\b|\b14\b[^.,]*(?:ден[ье]г|средств)", a))
 
 
 def offline(text):
@@ -66,9 +72,11 @@ def llm(text):
     )
     try:
         answer = json.load(urllib.request.urlopen(req, timeout=30))["choices"][0]["message"]["content"].strip()
-    except Exception:
+    except Exception as e:
+        print(f"LLM ошибка. {e}", file=sys.stderr)
         return offline(text)
-    if nums(answer) - nums(" ".join(kb.values())) - nums(text):
+    if not answer or invented(answer, text):
+        print(f"LLM ответ отклонен. {answer}", file=sys.stderr)
         return offline(text)
     return answer
 
